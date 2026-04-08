@@ -1,104 +1,84 @@
 from __future__ import annotations
 
-from app.services.audio_analysis import analyze_audio_context, load_audio
-from app.services.fretboard_mapper import map_note_to_fretboard_with_fallback
+from app.services.audio_analysis import load_audio
+from app.services.fretboard_mapper import infer_fretboard_profile, map_events_to_fretboard
 from app.services.gp5_exporter import export_tablature_to_gp5
-from app.services.note_mapper import frequency_to_note_name
-from app.services.pitch_detection import detect_pitch_segments
+from app.services.timing_grid import build_time_grid, quantize_events_to_grid
+from app.services.transcription_stack import run_solo_transcription
 
 
 class AudioToTabAgent:
     def run(self, audio_bytes: bytes, filename: str, job_id: str | None = None) -> dict:
         signal, sample_rate = load_audio(audio_bytes, filename)
-        audio_context = analyze_audio_context(signal, sample_rate)
-        segments = detect_pitch_segments(
+        transcription_result = run_solo_transcription(
             audio_bytes=audio_bytes,
             filename=filename,
-            guitar_tone=audio_context["guitar_tone"],
+            signal=signal,
+            sample_rate=sample_rate,
         )
+        audio_context = transcription_result["audio_context"]
+        events = transcription_result["transcription"]["events"]
+        timing_grid = build_time_grid(
+            audio_context.get("beat_times", []),
+            audio_context.get("total_duration", 0.0),
+            audio_context["tempo_bpm"],
+            audio_context["guitar_tone"],
+            meter_numerator=int(audio_context.get("meter_numerator", 4) or 4),
+            meter_denominator=int(audio_context.get("meter_denominator", 4) or 4),
+        )
+        events = quantize_events_to_grid(events, timing_grid)
+        events = [event for event in events if event.get("notes")]
 
-        detected_notes = []
-        tablature = []
-        warnings = []
-
-        for segment in segments:
-            note_name = frequency_to_note_name(segment["frequency"])
-            position = map_note_to_fretboard_with_fallback(note_name)
-            quantized_time = quantize_time(
-                segment["time"],
-                audio_context["tempo_bpm"],
-                audio_context["guitar_tone"],
-            )
-
-            detected_note = {
-                "time": segment["time"],
-                "quantized_time": quantized_time,
-                "note": note_name,
-                "frequency": segment["frequency"],
-            }
-
-            if position.get("transposed"):
-                detected_note["mapped_note"] = position["mapped_note"]
-                detected_note["transposed"] = True
-                warnings.append(
-                    {
-                        "time": segment["time"],
-                        "note": note_name,
-                        "mapped_note": position["mapped_note"],
-                        "reason": "note_out_of_range_transposed_by_octave",
-                    }
-                )
-
-            if position.get("unmapped"):
-                detected_note["unmapped"] = True
-                warnings.append(
-                    {
-                        "time": segment["time"],
-                        "note": note_name,
-                        "reason": "note_out_of_range_skipped",
-                    }
-                )
-                detected_notes.append(detected_note)
-                continue
-
-            detected_notes.append(detected_note)
-
-            tablature.append(
-                {
-                    "time": quantized_time,
-                    "detected_time": segment["time"],
-                    "note": note_name,
-                    "mapped_note": position["mapped_note"],
-                    "string": position["string"],
-                    "fret": position["fret"],
-                    "transposed": bool(position.get("transposed")),
-                }
-            )
+        fretboard_profile = infer_fretboard_profile(events)
+        tab_events, tablature, warnings = map_events_to_fretboard(events, fretboard_profile)
 
         return {
             "job_id": job_id,
             "filename": filename,
-            "audio_context": audio_context,
-            "detected_frequencies": segments,
-            "detected_notes": detected_notes,
+            "audio_context": {
+                **audio_context,
+                "embedding_model": transcription_result["embedding"]["model"],
+                "embedding_dimension": transcription_result["embedding"]["dimension"],
+                "transcription_backend": transcription_result["transcription"]["backend"],
+                "raw_note_event_count": transcription_result["transcription"].get("raw_note_event_count", len(events)),
+                "post_filter_event_count": len(events),
+                "timing_grid": timing_grid,
+                "detected_string_count": fretboard_profile.string_count,
+                "detected_tuning": fretboard_profile.name,
+                "tuning_notes": fretboard_profile.tuning,
+            },
+            "embedding": transcription_result["embedding"],
+            "detected_frequencies": [
+                {
+                    "time": event["time"],
+                    "frequencies": event["frequencies"],
+                }
+                for event in events
+            ],
+            "detected_notes": [
+                {
+                    "time": event["time"],
+                    "duration": event["duration"],
+                    "notes": event["notes"],
+                    "primary_note": event["primary_note"],
+                    "is_chord": event["is_chord"],
+                    "octave_doubling": event["octave_doubling"],
+                    "harmonic_candidate": event["harmonic_candidate"],
+                    "expression": event.get("expression", {}),
+                }
+                for event in events
+            ],
             "tablature": tablature,
-            "segments": segments,
+            "tab_events": tab_events,
+            "segments": events,
             "warnings": warnings,
             "exports": {
-                "gp5": export_tablature_to_gp5(tablature, filename, tempo=int(round(audio_context["tempo_bpm"]))),
+                "gp5": export_tablature_to_gp5(
+                    tab_events,
+                    filename,
+                    tempo=int(round(audio_context["tempo_bpm"])),
+                    tuning=fretboard_profile.tuning,
+                    timing_grid=timing_grid,
+                ),
             },
         }
-
-
-def quantize_time(time_seconds: float, tempo_bpm: float, guitar_tone: str) -> float:
-    if tempo_bpm <= 0:
-        return round(time_seconds, 3)
-
-    beat_duration = 60 / tempo_bpm
-    subdivision = 4 if guitar_tone in {"distorted", "mixed"} else 2
-    grid = beat_duration / subdivision
-
-    if grid <= 0:
-        return round(time_seconds, 3)
-
-    return round(round(time_seconds / grid) * grid, 3)

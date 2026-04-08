@@ -82,6 +82,9 @@ onBeforeUnmount(() => {
           <span v-if="activeJob?.logs?.audio_context">
             Timbre: {{ activeJob.logs.audio_context.guitar_tone }} | BPM: {{ Math.round(activeJob.logs.audio_context.tempo_bpm) }}
           </span>
+          <span v-if="activeJob?.logs?.audio_context?.detected_tuning">
+            Setup: {{ activeJob.logs.audio_context.detected_tuning }} | Cordas: {{ activeJob.logs.audio_context.detected_string_count }}
+          </span>
           <span v-if="errorMessage" class="error-copy">{{ errorMessage }}</span>
           <span v-if="activeJob?.error_message" class="error-copy">{{ activeJob.error_message }}</span>
         </div>

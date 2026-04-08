@@ -1,0 +1,25 @@
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.venv/
+venv/
+
+# Node / frontend
+node_modules/
+dist/
+
+# Laravel / PHP
+vendor/
+.env
+.env.*
+storage/*.key
+
+# OS / editor
+.idea/
+.vscode/

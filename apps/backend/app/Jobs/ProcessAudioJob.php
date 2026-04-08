@@ -63,6 +63,7 @@ class ProcessAudioJob implements ShouldQueue
                     'audio_context' => $payload['audio_context'] ?? [],
                     'detected_frequencies' => $payload['detected_frequencies'] ?? [],
                     'detected_notes' => $payload['detected_notes'] ?? [],
+                    'tab_events' => $payload['tab_events'] ?? [],
                     'raw_segments' => $payload['segments'] ?? [],
                     'warnings' => $payload['warnings'] ?? [],
                 ],

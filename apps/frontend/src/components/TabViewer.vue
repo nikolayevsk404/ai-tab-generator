@@ -17,7 +17,11 @@ defineProps<{
 
     <div v-for="entry in entries" :key="`${entry.time}-${entry.string}-${entry.fret}`" class="tab-row">
       <span>{{ entry.time.toFixed(3) }}s</span>
-      <span>{{ entry.note }}</span>
+      <span>
+        {{ entry.note }}
+        <small v-if="entry.event_type === 'chord'">acorde</small>
+        <small v-else-if="entry.technique">{{ entry.technique }}</small>
+      </span>
       <span>{{ entry.string }}</span>
       <span>{{ entry.fret }}</span>
     </div>

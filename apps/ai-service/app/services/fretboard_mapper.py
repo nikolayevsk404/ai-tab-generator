@@ -1,76 +1,175 @@
 from __future__ import annotations
 
-NOTE_INDEX = {
-    "C": 0,
-    "C#": 1,
-    "D": 2,
-    "D#": 3,
-    "E": 4,
-    "F": 5,
-    "F#": 6,
-    "G": 7,
-    "G#": 8,
-    "A": 9,
-    "A#": 10,
-    "B": 11,
-}
+from dataclasses import dataclass
+from typing import Any
 
-TUNING = {
-    7: "B1",
-    6: "E2",
-    5: "A2",
-    4: "D3",
-    3: "G3",
-    2: "B3",
-    1: "E4",
-}
+from app.services.note_mapper import midi_to_note_name, note_name_to_midi
+
+TUNING_PROFILES = [
+    {"name": "6-string standard", "string_count": 6, "notes": ["E4", "B3", "G3", "D3", "A2", "E2"]},
+]
 
 
-def note_to_midi(note_name: str) -> int:
-    if len(note_name) == 2:
-        pitch_class = note_name[0]
-        octave = int(note_name[1])
-    else:
-        pitch_class = note_name[:2]
-        octave = int(note_name[2])
-
-    return (octave + 1) * 12 + NOTE_INDEX[pitch_class]
+@dataclass
+class FretboardProfile:
+    name: str
+    string_count: int
+    tuning: dict[int, str]
 
 
-def midi_to_note_name(midi_note: int) -> str:
-    octave = (midi_note // 12) - 1
-    pitch_class = next(name for name, index in NOTE_INDEX.items() if index == midi_note % 12)
-    return f"{pitch_class}{octave}"
+DEFAULT_PROFILE = FretboardProfile(
+    name="6-string standard",
+    string_count=6,
+    tuning={1: "E4", 2: "B3", 3: "G3", 4: "D3", 5: "A2", 6: "E2"},
+)
 
 
-def find_fretboard_position(note_name: str) -> dict[str, int] | None:
-    target_midi = note_to_midi(note_name)
+def infer_fretboard_profile(events: list[dict[str, Any]]) -> FretboardProfile:
+    return DEFAULT_PROFILE
+
+
+def score_fretboard_profile(events: list[dict[str, Any]], profile: FretboardProfile) -> float:
+    total_score = 0.0
+    previous_average_fret = 5.0
+
+    for event in events:
+        mapped_notes = []
+
+        for note_name in event["notes"]:
+            candidates = find_fretboard_positions(note_name, profile)
+            if not candidates:
+                total_score += 50
+                continue
+
+            best_candidate = min(candidates, key=lambda candidate: (abs(candidate["fret"] - previous_average_fret), candidate["fret"]))
+            mapped_notes.append(best_candidate)
+            total_score += best_candidate["fret"] * 0.15
+
+        if mapped_notes:
+            average_fret = sum(candidate["fret"] for candidate in mapped_notes) / len(mapped_notes)
+            total_score += abs(average_fret - previous_average_fret) * 0.2
+            previous_average_fret = average_fret
+
+        if event["is_chord"]:
+            total_score -= len(mapped_notes) * 0.1
+
+    return total_score
+
+
+def map_events_to_fretboard(events: list[dict[str, Any]], profile: FretboardProfile) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    tab_events: list[dict[str, Any]] = []
+    flattened_tablature: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
+    previous_average_fret = 5.0
+
+    for event_index, event in enumerate(events):
+        mapped_notes = []
+        used_strings: set[int] = set()
+
+        for note_name in event["notes"]:
+            resolution = map_note_to_fretboard_with_fallback(note_name, profile, previous_average_fret, used_strings)
+
+            if resolution.get("unmapped"):
+                warnings.append(
+                    {
+                        "time": event["time"],
+                        "note": note_name,
+                        "reason": "note_out_of_range_skipped",
+                    }
+                )
+                continue
+
+            if resolution.get("transposed"):
+                warnings.append(
+                    {
+                        "time": event["time"],
+                        "note": note_name,
+                        "mapped_note": resolution["mapped_note"],
+                        "reason": "note_out_of_range_transposed_by_octave",
+                    }
+                )
+
+            used_strings.add(int(resolution["string"]))
+            mapped_notes.append(
+                {
+                    "note": note_name,
+                    "mapped_note": resolution["mapped_note"],
+                    "string": int(resolution["string"]),
+                    "fret": int(resolution["fret"]),
+                    "transposed": bool(resolution.get("transposed")),
+                }
+            )
+
+        if not mapped_notes:
+            continue
+
+        average_fret = sum(note["fret"] for note in mapped_notes) / len(mapped_notes)
+        previous_average_fret = average_fret
+
+        primary_note = mapped_notes[0]
+        mapped_notes = [primary_note]
+        event_type = "single_note"
+        technique = infer_technique(event_index, events, mapped_notes, tab_events)
+
+        tab_event = {
+            "event_id": event_index,
+            "time": event["time"],
+            "duration": event["duration"],
+            "detected_time": event.get("detected_time", event["time"]),
+            "detected_duration": event.get("detected_duration", event["duration"]),
+            "grid_start_index": event.get("grid_start_index"),
+            "grid_end_index": event.get("grid_end_index"),
+            "event_type": event_type,
+            "technique": technique,
+            "notes": mapped_notes,
+            "source_notes": [event["primary_note"]],
+            "features": event["features"],
+            "octave_doubling": False,
+            "harmonic_candidate": event["harmonic_candidate"],
+        }
+        tab_events.append(tab_event)
+
+        for mapped_note in mapped_notes:
+            flattened_tablature.append(
+                {
+                    "event_id": event_index,
+                    "time": event["time"],
+                    "detected_time": event.get("detected_time", event["time"]),
+                    "duration": event["duration"],
+                    "detected_duration": event.get("detected_duration", event["duration"]),
+                    "event_type": event_type,
+                    "technique": technique,
+                    "note": mapped_note["note"],
+                    "mapped_note": mapped_note["mapped_note"],
+                    "string": mapped_note["string"],
+                    "fret": mapped_note["fret"],
+                    "transposed": mapped_note["transposed"],
+                }
+            )
+
+    return tab_events, flattened_tablature, warnings
+
+
+def find_fretboard_positions(note_name: str, profile: FretboardProfile) -> list[dict[str, int]]:
+    target_midi = note_name_to_midi(note_name)
     candidates: list[dict[str, int]] = []
 
-    for string_number, open_note in TUNING.items():
-        fret = target_midi - note_to_midi(open_note)
-
+    for string_number, open_note in profile.tuning.items():
+        fret = target_midi - note_name_to_midi(open_note)
         if 0 <= fret <= 24:
             candidates.append({"string": string_number, "fret": fret})
 
-    if not candidates:
-        return None
-
-    candidates.sort(key=lambda position: (position["fret"], abs(position["string"] - 4)))
-    return candidates[0]
+    return sorted(candidates, key=lambda position: (position["fret"], abs(position["string"] - 4)))
 
 
-def map_note_to_fretboard(note_name: str) -> dict[str, int]:
-    position = find_fretboard_position(note_name)
-
-    if position is None:
-        raise ValueError(f"Could not map note {note_name} to the 7-string fretboard.")
-
-    return position
-
-
-def map_note_to_fretboard_with_fallback(note_name: str) -> dict[str, int | str | bool]:
-    direct_position = find_fretboard_position(note_name)
+def map_note_to_fretboard_with_fallback(
+    note_name: str,
+    profile: FretboardProfile,
+    previous_average_fret: float,
+    used_strings: set[int] | None = None,
+) -> dict[str, Any]:
+    used_strings = used_strings or set()
+    direct_position = select_best_position(find_fretboard_positions(note_name, profile), previous_average_fret, used_strings)
     if direct_position is not None:
         return {
             "string": direct_position["string"],
@@ -79,12 +178,11 @@ def map_note_to_fretboard_with_fallback(note_name: str) -> dict[str, int | str |
             "transposed": False,
         }
 
-    target_midi = note_to_midi(note_name)
+    target_midi = note_name_to_midi(note_name)
 
-    for semitones in (12, 24, -12, -24):
-        candidate_midi = target_midi + semitones
-        candidate_note = midi_to_note_name(candidate_midi)
-        fallback_position = find_fretboard_position(candidate_note)
+    for semitones in (12, -12, 24, -24):
+        candidate_note = midi_to_note_name(target_midi + semitones)
+        fallback_position = select_best_position(find_fretboard_positions(candidate_note, profile), previous_average_fret, used_strings)
 
         if fallback_position is not None:
             return {
@@ -99,3 +197,75 @@ def map_note_to_fretboard_with_fallback(note_name: str) -> dict[str, int | str |
         "transposed": False,
         "unmapped": True,
     }
+
+
+def select_best_position(
+    candidates: list[dict[str, int]],
+    previous_average_fret: float,
+    used_strings: set[int],
+) -> dict[str, int] | None:
+    available = [candidate for candidate in candidates if candidate["string"] not in used_strings]
+    pool = available or candidates
+
+    if not pool:
+        return None
+
+    return min(
+        pool,
+        key=lambda candidate: (abs(candidate["fret"] - previous_average_fret), candidate["fret"], candidate["string"]),
+    )
+
+
+def infer_technique(
+    event_index: int,
+    events: list[dict[str, Any]],
+    mapped_notes: list[dict[str, Any]],
+    previous_tab_events: list[dict[str, Any]],
+) -> str | None:
+    expression = events[event_index].get("expression", {})
+
+    if expression.get("sustain_candidate"):
+        return None
+
+    if expression.get("wah_candidate"):
+        return "wah"
+
+    if expression.get("bend_candidate"):
+        return "bend"
+
+    if expression.get("release_bend_candidate"):
+        return "release_bend"
+
+    if expression.get("vibrato_candidate"):
+        return "vibrato"
+
+    if events[event_index]["harmonic_candidate"]:
+        return "harmonic"
+
+    current_note = mapped_notes[0]
+    previous_event = previous_tab_events[-1] if previous_tab_events else None
+
+    if previous_event and len(previous_event["notes"]) == 1:
+        previous_note = previous_event["notes"][0]
+        gap = events[event_index]["time"] - previous_event["time"]
+        fret_delta = abs(current_note["fret"] - previous_note["fret"])
+        string_delta = abs(current_note["string"] - previous_note["string"])
+
+        if gap <= 0.12 and string_delta == 0 and 1 <= fret_delta <= 4:
+            return "legato"
+
+        if gap <= 0.16 and string_delta == 1:
+            streak = previous_event.get("technique") == "sweep"
+            if streak or len(previous_tab_events) >= 2:
+                return "sweep"
+
+    return None
+
+
+def map_note_to_fretboard(note_name: str) -> dict[str, int]:
+    positions = find_fretboard_positions(note_name, DEFAULT_PROFILE)
+
+    if not positions:
+        raise ValueError(f"Could not map note {note_name} to the 6-string fretboard.")
+
+    return positions[0]

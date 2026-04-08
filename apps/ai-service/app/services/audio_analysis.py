@@ -4,6 +4,7 @@ import io
 from typing import Any
 
 import numpy as np
+import soundfile as sf
 
 try:
     import librosa
@@ -27,20 +28,47 @@ def load_audio(audio_bytes: bytes, filename: str) -> tuple[np.ndarray, int]:
     return signal, sample_rate
 
 
+def signal_to_audio_bytes(signal: np.ndarray, sample_rate: int, filename: str) -> bytes:
+    buffer = io.BytesIO()
+    safe_signal = np.asarray(signal, dtype=np.float32)
+    sf.write(buffer, safe_signal, sample_rate, format="WAV")
+    buffer.seek(0)
+    return buffer.read()
+
+
+def isolate_guitar_signal(signal: np.ndarray) -> np.ndarray:
+    harmonic, percussive = librosa.effects.hpss(signal)
+    emphasized = (harmonic * 0.8) + (signal * 0.2)
+    peak = float(np.max(np.abs(emphasized))) if emphasized.size else 0.0
+    if peak <= 1e-6:
+        return emphasized
+    return emphasized / peak
+
+
 def analyze_audio_context(signal: np.ndarray, sample_rate: int) -> dict[str, Any]:
-    onset_envelope = librosa.onset.onset_strength(y=signal, sr=sample_rate)
+    guitar_signal = isolate_guitar_signal(signal)
+    onset_envelope = librosa.onset.onset_strength(y=guitar_signal, sr=sample_rate)
     tempo_array = librosa.feature.tempo(onset_envelope=onset_envelope, sr=sample_rate, aggregate=None)
     estimated_tempo = float(np.median(tempo_array)) if tempo_array.size else 120.0
 
     _, beat_frames = librosa.beat.beat_track(onset_envelope=onset_envelope, sr=sample_rate)
     beat_times = librosa.frames_to_time(beat_frames, sr=sample_rate).tolist()
+    onset_frames = librosa.onset.onset_detect(y=guitar_signal, sr=sample_rate, backtrack=True)
+    onset_times = librosa.frames_to_time(onset_frames, sr=sample_rate).tolist()
 
-    spectral_flatness = float(np.mean(librosa.feature.spectral_flatness(y=signal)))
-    zero_crossing_rate = float(np.mean(librosa.feature.zero_crossing_rate(y=signal)))
+    spectral_flatness = float(np.mean(librosa.feature.spectral_flatness(y=guitar_signal)))
+    zero_crossing_rate = float(np.mean(librosa.feature.zero_crossing_rate(y=guitar_signal)))
     harmonic, percussive = librosa.effects.hpss(signal)
     harmonic_energy = float(np.mean(np.abs(harmonic)))
     percussive_energy = float(np.mean(np.abs(percussive)))
     harmonic_ratio = harmonic_energy / (percussive_energy + 1e-6)
+    rolloff = float(np.mean(librosa.feature.spectral_rolloff(y=guitar_signal, sr=sample_rate)))
+    guitar_presence_score = _estimate_guitar_presence_score(
+        spectral_flatness=spectral_flatness,
+        zero_crossing_rate=zero_crossing_rate,
+        harmonic_ratio=harmonic_ratio,
+        rolloff=rolloff,
+    )
 
     distorted_score = 0
     if spectral_flatness > 0.02:
@@ -60,10 +88,32 @@ def analyze_audio_context(signal: np.ndarray, sample_rate: int) -> dict[str, Any
     return {
         "tempo_bpm": round(estimated_tempo, 2),
         "beat_times": [round(float(time), 3) for time in beat_times[:128]],
+        "onset_times": [round(float(time), 3) for time in onset_times[:256]],
+        "total_duration": round(float(len(signal) / sample_rate), 3),
         "guitar_tone": guitar_tone,
         "distortion_features": {
             "spectral_flatness": round(spectral_flatness, 5),
             "zero_crossing_rate": round(zero_crossing_rate, 5),
             "harmonic_ratio": round(harmonic_ratio, 5),
+            "spectral_rolloff": round(rolloff, 2),
         },
+        "guitar_presence_score": round(guitar_presence_score, 3),
     }
+
+
+def _estimate_guitar_presence_score(
+    spectral_flatness: float,
+    zero_crossing_rate: float,
+    harmonic_ratio: float,
+    rolloff: float,
+) -> float:
+    score = 0.0
+    if harmonic_ratio >= 1.3:
+        score += 0.35
+    if 0.005 <= spectral_flatness <= 0.12:
+        score += 0.2
+    if 0.02 <= zero_crossing_rate <= 0.18:
+        score += 0.2
+    if 1200 <= rolloff <= 6500:
+        score += 0.25
+    return min(1.0, score)

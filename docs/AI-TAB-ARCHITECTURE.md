@@ -5,7 +5,7 @@
 - ai-service (Python)
 
 Pipeline:
-Audio → Pitch → Notes → Fretboard
+Audio -> Basic Pitch -> Notes -> Fretboard -> GP5
 
 ---
 
@@ -50,7 +50,7 @@ backend/
 ```
 
 ### apps/ai-service (Python)
-Responsável pela IA
+Responsavel pela IA
 
 ```
 ai-service/
@@ -59,7 +59,8 @@ ai-service/
 │   ├── agent/
 │   │   └── AudioToTabAgent.py
 │   ├── services/
-│   │   ├── pitch_detection.py
+│   │   ├── transcription_stack.py
+│   │   ├── audio_embeddings.py
 │   │   ├── note_mapper.py
 │   │   └── fretboard_mapper.py
 │   ├── models/
@@ -133,7 +134,7 @@ Crie um microserviço usando FastAPI com endpoint:
 POST /process-audio
 
 Recebe:
-- arquivo de áudio
+- arquivo de audio
 
 Retorna:
 - lista de notas detectadas
@@ -149,31 +150,32 @@ Organizar código em:
 Implemente classe AudioToTabAgent com pipeline:
 
 - load audio
-- pitch detection
+- basic-pitch transcription
+- embeddings de audio
 - frequency → note
 - note → fretboard mapping
 
 Separar cada etapa em arquivos diferentes
 
-### TASK 5 — Pitch Detection
+### TASK 5 — Transcription Backend
 
-Implementar detecção de pitch usando librosa:
+Implementar transcricao com modelo pre-treinado:
 
-- usar piptrack ou yin
-- extrair frequências dominantes
-- filtrar ruído
+- usar `basic-pitch` como backend principal
+- manter fallback com `librosa`
+- preservar timestamps e duracoes
 
 Retornar lista de frequências com timestamp
 
-### TASK 6 — Fretboard Mapping (7 cordas)
+### TASK 6 — Fretboard Mapping (6 cordas)
 
 Criar função que:
 
 - recebe nota (ex: E2)
 - retorna melhor posição no braço (string + fret)
 
-Considerar tuning de 7 cordas:
-B1 E2 A2 D3 G3 B3 E4
+Considerar tuning padrao de 6 cordas:
+E2 A2 D3 G3 B3 E4
 
 Priorizar menor movimento de mão
 

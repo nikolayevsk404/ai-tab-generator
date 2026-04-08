@@ -1,10 +1,20 @@
 # AI Tab Generator
 
-Monorepo local para gerar uma primeira versao funcional do fluxo:
+Monorepo local para gerar uma primeira versao funcional do fluxo de audio para tablatura, com:
 
 - frontend em Vue 3
 - backend em Laravel 13
 - microservico Python com FastAPI + librosa
+
+## Documentacao
+
+Os documentos de requisitos e planejamento ficam em `doc/`:
+
+- `doc/README.md`: indice da documentacao
+- `doc/AI-TAB-README.md`: visao geral original do produto
+- `doc/AI-TAB-ARCHITECTURE.md`: diretrizes de arquitetura
+- `doc/AI-TAB-AGENT.md`: resumo do agent principal
+- `doc/AI-TAB-TASKS.md`: backlog inicial
 
 ## Estrutura
 
@@ -15,6 +25,7 @@ apps/
   ai-service/
 packages/
   shared/
+doc/
 ```
 
 ## Fluxo
@@ -27,7 +38,7 @@ packages/
 
 ## Banco local
 
-Neste primeiro setup local, o backend sobe com SQLite para reduzir atrito e fazer o pipeline funcionar rapido na maquina.
+Neste setup local, o backend usa SQLite para reduzir atrito e fazer o pipeline funcionar rapido na maquina.
 
 ## Como rodar
 
