@@ -48,13 +48,12 @@ def isolate_guitar_signal(signal: np.ndarray) -> np.ndarray:
 def analyze_audio_context(signal: np.ndarray, sample_rate: int) -> dict[str, Any]:
     guitar_signal = isolate_guitar_signal(signal)
     onset_envelope = librosa.onset.onset_strength(y=guitar_signal, sr=sample_rate)
-    tempo_array = librosa.feature.tempo(onset_envelope=onset_envelope, sr=sample_rate, aggregate=None)
-    estimated_tempo = float(np.median(tempo_array)) if tempo_array.size else 120.0
 
     _, beat_frames = librosa.beat.beat_track(onset_envelope=onset_envelope, sr=sample_rate)
     beat_times = librosa.frames_to_time(beat_frames, sr=sample_rate).tolist()
     onset_frames = librosa.onset.onset_detect(y=guitar_signal, sr=sample_rate, backtrack=True)
     onset_times = librosa.frames_to_time(onset_frames, sr=sample_rate).tolist()
+    estimated_tempo = _estimate_tempo_from_beats(beat_times)
 
     spectral_flatness = float(np.mean(librosa.feature.spectral_flatness(y=guitar_signal)))
     zero_crossing_rate = float(np.mean(librosa.feature.zero_crossing_rate(y=guitar_signal)))
@@ -117,3 +116,18 @@ def _estimate_guitar_presence_score(
     if 1200 <= rolloff <= 6500:
         score += 0.25
     return min(1.0, score)
+
+
+def _estimate_tempo_from_beats(beat_times: list[float]) -> float:
+    if len(beat_times) >= 2:
+        intervals = np.diff(np.asarray(beat_times, dtype=float))
+        valid_intervals = intervals[(intervals > 0.18) & (intervals < 1.5)]
+        if valid_intervals.size:
+            bpm = 60.0 / float(np.median(valid_intervals))
+            while bpm < 70:
+                bpm *= 2
+            while bpm > 190:
+                bpm /= 2
+            return bpm
+
+    return 120.0

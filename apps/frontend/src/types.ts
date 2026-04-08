@@ -30,6 +30,8 @@ export type AudioJobResponse = {
       beat_times: number[]
       onset_times?: number[]
       guitar_tone: 'clean' | 'distorted' | 'mixed'
+      raw_note_event_count?: number
+      post_filter_event_count?: number
       detected_string_count?: number
       detected_tuning?: string
       tuning_notes?: Record<number, string>
@@ -37,7 +39,9 @@ export type AudioJobResponse = {
         spectral_flatness: number
         zero_crossing_rate: number
         harmonic_ratio: number
+        spectral_rolloff?: number
       }
+      guitar_presence_score?: number
     }
     detected_frequencies?: Array<{ time: number; frequencies: number[] }>
     detected_notes?: Array<{

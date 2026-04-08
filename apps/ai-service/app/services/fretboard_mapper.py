@@ -7,6 +7,8 @@ from app.services.note_mapper import midi_to_note_name, note_name_to_midi
 
 TUNING_PROFILES = [
     {"name": "6-string standard", "string_count": 6, "notes": ["E4", "B3", "G3", "D3", "A2", "E2"]},
+    {"name": "6-string drop d", "string_count": 6, "notes": ["E4", "B3", "G3", "D3", "A2", "D2"]},
+    {"name": "7-string standard", "string_count": 7, "notes": ["E4", "B3", "G3", "D3", "A2", "E2", "B1"]},
 ]
 
 
