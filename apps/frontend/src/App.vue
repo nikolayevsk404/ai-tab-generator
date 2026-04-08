@@ -64,7 +64,7 @@ onBeforeUnmount(() => {
   <main class="page-shell">
     <section class="hero-frame">
       <div class="hero-topline">
-        <p class="eyebrow">Blackened Audio Forge</p>
+        <p class="eyebrow">DEV BY NIKOLAYEVSK</p>
         <span class="hero-badge">Laravel + Vue + Python</span>
       </div>
 

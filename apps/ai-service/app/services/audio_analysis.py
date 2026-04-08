@@ -48,12 +48,17 @@ def isolate_guitar_signal(signal: np.ndarray) -> np.ndarray:
 def analyze_audio_context(signal: np.ndarray, sample_rate: int) -> dict[str, Any]:
     guitar_signal = isolate_guitar_signal(signal)
     onset_envelope = librosa.onset.onset_strength(y=guitar_signal, sr=sample_rate)
+    tempo_candidates = librosa.feature.tempo(
+        onset_envelope=onset_envelope,
+        sr=sample_rate,
+        aggregate=None,
+    )
 
     _, beat_frames = librosa.beat.beat_track(onset_envelope=onset_envelope, sr=sample_rate)
     beat_times = librosa.frames_to_time(beat_frames, sr=sample_rate).tolist()
     onset_frames = librosa.onset.onset_detect(y=guitar_signal, sr=sample_rate, backtrack=True)
     onset_times = librosa.frames_to_time(onset_frames, sr=sample_rate).tolist()
-    estimated_tempo = _estimate_tempo_from_beats(beat_times)
+    estimated_tempo = _estimate_tempo(beat_times, tempo_candidates)
 
     spectral_flatness = float(np.mean(librosa.feature.spectral_flatness(y=guitar_signal)))
     zero_crossing_rate = float(np.mean(librosa.feature.zero_crossing_rate(y=guitar_signal)))
@@ -118,16 +123,32 @@ def _estimate_guitar_presence_score(
     return min(1.0, score)
 
 
-def _estimate_tempo_from_beats(beat_times: list[float]) -> float:
+def _estimate_tempo(beat_times: list[float], tempo_candidates: np.ndarray) -> float:
+    candidate_bpms: list[float] = []
+
     if len(beat_times) >= 2:
         intervals = np.diff(np.asarray(beat_times, dtype=float))
         valid_intervals = intervals[(intervals > 0.18) & (intervals < 1.5)]
         if valid_intervals.size:
             bpm = 60.0 / float(np.median(valid_intervals))
-            while bpm < 70:
-                bpm *= 2
-            while bpm > 190:
-                bpm /= 2
-            return bpm
+            candidate_bpms.append(_normalize_bpm(bpm))
+
+    if tempo_candidates.size:
+        finite_candidates = tempo_candidates[np.isfinite(tempo_candidates)]
+        if finite_candidates.size:
+            candidate_bpms.append(_normalize_bpm(float(np.median(finite_candidates))))
+            candidate_bpms.append(_normalize_bpm(float(np.percentile(finite_candidates, 65))))
+
+    if candidate_bpms:
+        candidate_bpms.sort()
+        return float(np.median(np.asarray(candidate_bpms, dtype=float)))
 
     return 120.0
+
+
+def _normalize_bpm(bpm: float) -> float:
+    while bpm < 70:
+        bpm *= 2
+    while bpm > 190:
+        bpm /= 2
+    return bpm
