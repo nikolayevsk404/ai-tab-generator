@@ -1,21 +1,27 @@
-# Documentacao do AI Tab Generator
+# Docs - AI Tab Generator
 
-Esta pasta centraliza os documentos usados como base para planejar e desenvolver a aplicacao.
+Esta pasta reune os documentos de produto, arquitetura e execucao do projeto.
 
-## Arquivos
+## Objetivo da pasta
 
-- `AI-TAB-README.md`: contexto do produto, objetivo, stack e backlog macro
-- `AI-TAB-ARCHITECTURE.md`: estrutura recomendada do monorepo e separacao de responsabilidades
-- `AI-TAB-AGENT.md`: definicao resumida do `AudioToTabAgent`
-- `AI-TAB-TASKS.md`: checklist curto das entregas iniciais
+- centralizar o contexto funcional e tecnico
+- facilitar onboarding rapido no repositorio
+- manter historico de decisoes de arquitetura e backlog
 
-## Ordem sugerida de leitura
+## Indice de documentos
+
+- `AI-TAB-README.md`: visao de produto, stack, fluxo e backlog original
+- `AI-TAB-ARCHITECTURE.md`: arquitetura do monorepo e regras de separacao por modulo
+- `AI-TAB-AGENT.md`: papel, entrada, saida e pipeline do `AudioToTabAgent`
+- `AI-TAB-TASKS.md`: lista inicial de tarefas para entrega incremental
+
+## Ordem recomendada de leitura
 
 1. `AI-TAB-README.md`
 2. `AI-TAB-ARCHITECTURE.md`
 3. `AI-TAB-AGENT.md`
 4. `AI-TAB-TASKS.md`
 
-## Observacao
+## Relacao com a raiz do projeto
 
-Os arquivos foram mantidos proximos do formato original, agora organizados em um unico lugar para facilitar manutencao e consulta.
+O `README.md` da raiz descreve como executar e navegar no repositorio. Esta pasta concentra o material de referencia para evolucao do produto e da arquitetura.
