@@ -1,4 +1,6 @@
 from app.services.timing_grid import build_time_grid, quantize_events_to_grid
+from app.services.audio_analysis import _pick_consensus_bpm
+from app.services.transcription_stack import _should_merge_same_note_events
 
 
 def test_build_time_grid_uses_sixteenth_grid_for_distorted_audio() -> None:
@@ -16,3 +18,14 @@ def test_quantize_events_to_grid_preserves_timeline_progression() -> None:
 
     assert quantized[0]["time"] == 0.125
     assert quantized[0]["duration"] == 0.125
+
+
+def test_pick_consensus_bpm_prefers_clustered_tempo() -> None:
+    bpm = _pick_consensus_bpm([(96.2, 1.0), (95.8, 0.9), (192.0, 0.4), (97.1, 0.7)])
+    assert 95.0 <= bpm <= 98.0
+
+
+def test_basic_pitch_dedupe_keeps_fast_repeated_notes() -> None:
+    previous = {"time": 0.200, "duration": 0.060}
+    current = {"time": 0.270, "duration": 0.055}
+    assert _should_merge_same_note_events(previous, current) is False

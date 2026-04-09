@@ -43,18 +43,23 @@ def detect_musical_events(
         if len(window) < 512:
             continue
 
-        candidates = _extract_note_candidates(window, sample_rate, guitar_tone)
-        if not candidates:
+        primary = _estimate_primary_frequency(window, sample_rate, guitar_tone)
+        if primary is None:
             continue
-
-        primary_candidate = _select_primary_candidate(candidates, guitar_tone)
-        if primary_candidate is None:
+        note_name = frequency_to_note_name(float(primary))
+        midi_note = note_name_to_midi(note_name)
+        if midi_note < 40 or midi_note > 88:
             continue
-
-        note_names = [str(primary_candidate["note"])]
+        note_names = [note_name]
         analysis_n_fft = _resolve_n_fft(len(window), guitar_tone)
         analysis_hop_length = max(64, analysis_n_fft // 4)
-        expression = _detect_expression_features(window, sample_rate, guitar_tone, analysis_n_fft, analysis_hop_length)
+        expression = {
+            "bend_candidate": False,
+            "release_bend_candidate": False,
+            "vibrato_candidate": False,
+            "sustain_candidate": (end_time - start_time) >= 0.18,
+            "wah_candidate": False,
+        }
         spectral_centroid = float(
             np.mean(
                 librosa.feature.spectral_centroid(
@@ -71,7 +76,7 @@ def detect_musical_events(
             {
                 "time": round(float(start_time), 3),
                 "duration": round(float(end_time - start_time), 3),
-                "frequencies": [float(primary_candidate["frequency"])],
+                "frequencies": [round(float(primary), 2)],
                 "notes": note_names,
                 "primary_note": note_names[0],
                 "is_chord": False,
@@ -83,7 +88,7 @@ def detect_musical_events(
                     "spectral_centroid": round(spectral_centroid, 2),
                     "rms": round(rms, 5),
                     "polyphony": 1,
-                    "candidate_strengths": [float(primary_candidate["magnitude"])],
+                    "candidate_strengths": [1.0],
                 },
             }
         )
@@ -91,19 +96,84 @@ def detect_musical_events(
     return _post_process_events(events, signal_duration)
 
 
+def _estimate_primary_frequency(window: np.ndarray, sample_rate: int, guitar_tone: str) -> float | None:
+    frame_length = _resolve_n_fft(len(window), guitar_tone)
+    hop_length = max(64, frame_length // 4)
+    fmin = librosa.note_to_hz("E2")
+    fmax = librosa.note_to_hz("E6")
+
+    try:
+        pyin_f0, voiced_flag, voiced_prob = librosa.pyin(
+            window,
+            fmin=fmin,
+            fmax=fmax,
+            sr=sample_rate,
+            frame_length=frame_length,
+            hop_length=hop_length,
+        )
+        if pyin_f0 is not None:
+            finite = np.isfinite(pyin_f0)
+            if finite.any():
+                voiced = finite
+                if voiced_flag is not None:
+                    voiced &= voiced_flag
+                if voiced_prob is not None:
+                    voiced &= voiced_prob >= 0.45
+                tracked = pyin_f0[voiced]
+                if tracked.size:
+                    return float(np.median(tracked))
+    except Exception:
+        pass
+
+    try:
+        yin_curve = librosa.yin(
+            window,
+            fmin=fmin,
+            fmax=fmax,
+            sr=sample_rate,
+            frame_length=frame_length,
+            hop_length=hop_length,
+        )
+        valid = yin_curve[np.isfinite(yin_curve)]
+        if valid.size:
+            return float(np.median(valid))
+    except Exception:
+        pass
+
+    candidates = _extract_note_candidates(window, sample_rate, guitar_tone)
+    if not candidates:
+        return None
+    return float(candidates[0]["frequency"])
+
+
 def _detect_onsets(signal: np.ndarray, sample_rate: int, guitar_tone: str) -> list[float]:
     hop_length = 256 if guitar_tone in {"distorted", "mixed"} else 512
+    if guitar_tone in {"distorted", "mixed"}:
+        pre_max = 10
+        post_max = 10
+        pre_avg = 40
+        post_avg = 40
+        wait = 2
+        delta = 0.09
+    else:
+        pre_max = 16
+        post_max = 16
+        pre_avg = 70
+        post_avg = 70
+        wait = 3
+        delta = 0.13
+
     onset_frames = librosa.onset.onset_detect(
         y=signal,
         sr=sample_rate,
         hop_length=hop_length,
         backtrack=True,
-        pre_max=20,
-        post_max=20,
-        pre_avg=100,
-        post_avg=100,
-        delta=0.15 if guitar_tone == "clean" else 0.1,
-        wait=5,
+        pre_max=pre_max,
+        post_max=post_max,
+        pre_avg=pre_avg,
+        post_avg=post_avg,
+        delta=delta,
+        wait=wait,
     )
     return [round(float(time), 3) for time in librosa.frames_to_time(onset_frames, sr=sample_rate, hop_length=hop_length)]
 
@@ -348,11 +418,7 @@ def _post_process_events(events: list[dict[str, Any]], signal_duration: float) -
 
         if cleaned_events:
             previous = cleaned_events[-1]
-            same_note = previous["primary_note"] == event["primary_note"]
-            close_in_time = abs(event["time"] - previous["time"]) <= 0.05
-            similar_duration = abs(event["duration"] - previous["duration"]) <= 0.04
-
-            if same_note and close_in_time and similar_duration:
+            if _should_merge_neighbor_events(previous, event):
                 previous_end = previous["time"] + previous["duration"]
                 current_end = event["time"] + event["duration"]
                 previous["duration"] = round(max(previous_end, current_end) - previous["time"], 3)
@@ -361,3 +427,21 @@ def _post_process_events(events: list[dict[str, Any]], signal_duration: float) -
         cleaned_events.append(event)
 
     return cleaned_events
+
+
+def _should_merge_neighbor_events(previous: dict[str, Any], current: dict[str, Any]) -> bool:
+    if previous["primary_note"] != current["primary_note"]:
+        return False
+
+    prev_start = float(previous["time"])
+    prev_duration = float(previous["duration"])
+    cur_start = float(current["time"])
+    cur_duration = float(current["duration"])
+    prev_end = prev_start + prev_duration
+    gap = cur_start - prev_end
+
+    # Keep fast repeated picks as separate notes; merge only near-duplicates.
+    near_duplicate_start = abs(cur_start - prev_start) <= 0.015
+    very_similar_duration = abs(cur_duration - prev_duration) <= 0.025
+    slight_overlap = gap <= 0.01
+    return near_duplicate_start and very_similar_duration and slight_overlap

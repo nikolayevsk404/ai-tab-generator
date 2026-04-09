@@ -101,6 +101,8 @@ def _convert_basic_pitch_events(note_events: list[Any]) -> list[dict[str, Any]]:
         end_time = float(raw_event[1])
         midi_note = int(raw_event[2])
         confidence = float(raw_event[3])
+        if midi_note < 40 or midi_note > 88:
+            continue
         note_name = _midi_to_note_name(midi_note)
 
         if end_time <= start_time or confidence < 0.45:
@@ -110,7 +112,7 @@ def _convert_basic_pitch_events(note_events: list[Any]) -> list[dict[str, Any]]:
             "bend_candidate": False,
             "release_bend_candidate": False,
             "vibrato_candidate": False,
-            "sustain_candidate": end_time - start_time >= 0.2,
+            "sustain_candidate": end_time - start_time >= 0.18,
             "wah_candidate": False,
         }
 
@@ -134,7 +136,8 @@ def _convert_basic_pitch_events(note_events: list[Any]) -> list[dict[str, Any]]:
             }
         )
 
-    return _dedupe_basic_pitch_events(events)
+    deduped = _dedupe_basic_pitch_events(events)
+    return _enforce_monophonic_timeline(deduped)
 
 
 def _estimate_meter(audio_context: dict[str, Any]) -> dict[str, int]:
@@ -177,17 +180,18 @@ def _dedupe_basic_pitch_events(events: list[dict[str, Any]]) -> list[dict[str, A
             overlap = event["time"] <= previous["time"] + previous["duration"] + 0.04
 
             if same_note and overlap:
-                previous_end = previous["time"] + previous["duration"]
-                current_end = event["time"] + event["duration"]
-                previous["duration"] = round(max(previous_end, current_end) - previous["time"], 3)
+                if _should_merge_same_note_events(previous, event):
+                    previous_end = previous["time"] + previous["duration"]
+                    current_end = event["time"] + event["duration"]
+                    previous["duration"] = round(max(previous_end, current_end) - previous["time"], 3)
 
-                previous_confidence = previous["features"]["transcription_confidence"]
-                current_confidence = event["features"]["transcription_confidence"]
-                merged_confidence = round(max(previous_confidence, current_confidence), 5)
-                previous["features"]["transcription_confidence"] = merged_confidence
-                previous["features"]["candidate_strengths"] = [merged_confidence]
-                previous["expression"]["sustain_candidate"] = previous["duration"] >= 0.2
-                continue
+                    previous_confidence = previous["features"]["transcription_confidence"]
+                    current_confidence = event["features"]["transcription_confidence"]
+                    merged_confidence = round(max(previous_confidence, current_confidence), 5)
+                    previous["features"]["transcription_confidence"] = merged_confidence
+                    previous["features"]["candidate_strengths"] = [merged_confidence]
+                    previous["expression"]["sustain_candidate"] = previous["duration"] >= 0.2
+                    continue
 
         deduped.append(event)
 
@@ -211,6 +215,61 @@ def _filter_guitar_events(
         filtered_events.append(event)
 
     return filtered_events
+
+
+def _enforce_monophonic_timeline(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not events:
+        return []
+
+    kept: list[dict[str, Any]] = []
+    active_end = -1.0
+
+    for event in sorted(
+        events,
+        key=lambda item: (
+            float(item["time"]),
+            -float(item["features"].get("transcription_confidence", 0.0)),
+        ),
+    ):
+        start = float(event["time"])
+        end = start + float(event["duration"])
+        confidence = float(event["features"].get("transcription_confidence", 0.0))
+
+        if not kept:
+            kept.append(event)
+            active_end = end
+            continue
+
+        if start >= active_end - 0.015:
+            kept.append(event)
+            active_end = end
+            continue
+
+        previous = kept[-1]
+        previous_confidence = float(previous["features"].get("transcription_confidence", 0.0))
+        previous_end = float(previous["time"]) + float(previous["duration"])
+
+        if confidence > previous_confidence:
+            kept[-1] = event
+            active_end = end
+        else:
+            active_end = max(active_end, previous_end)
+
+    return kept
+
+
+def _should_merge_same_note_events(previous: dict[str, Any], current: dict[str, Any]) -> bool:
+    prev_start = float(previous["time"])
+    prev_duration = float(previous["duration"])
+    cur_start = float(current["time"])
+    cur_duration = float(current["duration"])
+    prev_end = prev_start + prev_duration
+    gap = cur_start - prev_end
+
+    near_duplicate_start = abs(cur_start - prev_start) <= 0.015
+    very_similar_duration = abs(cur_duration - prev_duration) <= 0.025
+    slight_overlap = gap <= 0.012
+    return near_duplicate_start and very_similar_duration and slight_overlap
 
 
 def _score_event_as_guitar(

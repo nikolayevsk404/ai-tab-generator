@@ -224,43 +224,7 @@ def infer_technique(
     mapped_notes: list[dict[str, Any]],
     previous_tab_events: list[dict[str, Any]],
 ) -> str | None:
-    expression = events[event_index].get("expression", {})
-
-    if expression.get("sustain_candidate"):
-        return None
-
-    if expression.get("wah_candidate"):
-        return "wah"
-
-    if expression.get("bend_candidate"):
-        return "bend"
-
-    if expression.get("release_bend_candidate"):
-        return "release_bend"
-
-    if expression.get("vibrato_candidate"):
-        return "vibrato"
-
-    if events[event_index]["harmonic_candidate"]:
-        return "harmonic"
-
-    current_note = mapped_notes[0]
-    previous_event = previous_tab_events[-1] if previous_tab_events else None
-
-    if previous_event and len(previous_event["notes"]) == 1:
-        previous_note = previous_event["notes"][0]
-        gap = events[event_index]["time"] - previous_event["time"]
-        fret_delta = abs(current_note["fret"] - previous_note["fret"])
-        string_delta = abs(current_note["string"] - previous_note["string"])
-
-        if gap <= 0.12 and string_delta == 0 and 1 <= fret_delta <= 4:
-            return "legato"
-
-        if gap <= 0.16 and string_delta == 1:
-            streak = previous_event.get("technique") == "sweep"
-            if streak or len(previous_tab_events) >= 2:
-                return "sweep"
-
+    # Keep the first iteration intentionally simple: focus on pitch/time accuracy only.
     return None
 
 
