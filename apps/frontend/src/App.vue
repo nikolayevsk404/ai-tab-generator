@@ -72,13 +72,13 @@ onBeforeUnmount(() => {
         <div class="hero-copy-block">
           <h1>AI Tab Generator</h1>
           <p class="hero-copy">
-            Envie o audio do solo, processe na fila e receba uma tablatura com leitura ritmica, mapeamento de braço e export em Guitar Pro.
+            Envie o áudio do solo, aguarde o processamento e receba a tablatura com ritmo, mapeamento do braço e exportação para Guitar Pro.
           </p>
 
           <div class="hero-meta">
             <div class="meta-card">
               <span>Escopo</span>
-              <strong>Solo Guitar</strong>
+              <strong>Guitar Solo</strong>
             </div>
             <div class="meta-card">
               <span>Setup</span>

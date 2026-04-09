@@ -1,3 +1,5 @@
+![Imagem](docs/img/ai-tab-generator.png)
+
 # AI Tab Generator
 
 Monorepo para converter audio de guitarra em tablatura, com pipeline assincrono e arquitetura multi-stack.

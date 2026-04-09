@@ -284,7 +284,7 @@ h2 {
 .logs-card {
   grid-template-rows: auto minmax(0, 1fr);
   max-height: min(72vh, 820px);
-  min-height: 520px;
+  min-height: 475px;
 }
 
 .result-actions {
