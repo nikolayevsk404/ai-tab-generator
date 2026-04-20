@@ -40,7 +40,8 @@ def detect_musical_events(
         end_sample = min(len(signal), int(end_time * sample_rate))
         window = signal[start_sample:end_sample]
 
-        if len(window) < 512:
+        minimum_window_length = _minimum_pitch_window_length(sample_rate)
+        if len(window) < max(256, minimum_window_length // 2):
             continue
 
         primary = _estimate_primary_frequency(window, sample_rate, guitar_tone)
@@ -52,6 +53,7 @@ def detect_musical_events(
             continue
         note_names = [note_name]
         analysis_n_fft = _resolve_n_fft(len(window), guitar_tone)
+        analysis_window = _prepare_window_for_spectral_analysis(window, analysis_n_fft)
         analysis_hop_length = max(64, analysis_n_fft // 4)
         expression = {
             "bend_candidate": False,
@@ -63,14 +65,14 @@ def detect_musical_events(
         spectral_centroid = float(
             np.mean(
                 librosa.feature.spectral_centroid(
-                    y=window,
+                    y=analysis_window,
                     sr=sample_rate,
                     n_fft=analysis_n_fft,
                     hop_length=analysis_hop_length,
                 )
             )
         )
-        rms = float(np.mean(librosa.feature.rms(y=window, frame_length=analysis_n_fft, hop_length=analysis_hop_length)))
+        rms = float(np.mean(librosa.feature.rms(y=analysis_window, frame_length=analysis_n_fft, hop_length=analysis_hop_length)))
 
         events.append(
             {
@@ -97,14 +99,15 @@ def detect_musical_events(
 
 
 def _estimate_primary_frequency(window: np.ndarray, sample_rate: int, guitar_tone: str) -> float | None:
-    frame_length = _resolve_n_fft(len(window), guitar_tone)
+    frame_length = max(_minimum_pitch_window_length(sample_rate), _resolve_n_fft(len(window), guitar_tone))
+    analysis_window = _prepare_window_for_pitch_analysis(window, frame_length)
     hop_length = max(64, frame_length // 4)
     fmin = librosa.note_to_hz("E2")
     fmax = librosa.note_to_hz("E6")
 
     try:
         pyin_f0, voiced_flag, voiced_prob = librosa.pyin(
-            window,
+            analysis_window,
             fmin=fmin,
             fmax=fmax,
             sr=sample_rate,
@@ -127,7 +130,7 @@ def _estimate_primary_frequency(window: np.ndarray, sample_rate: int, guitar_ton
 
     try:
         yin_curve = librosa.yin(
-            window,
+            analysis_window,
             fmin=fmin,
             fmax=fmax,
             sr=sample_rate,
@@ -181,7 +184,8 @@ def _detect_onsets(signal: np.ndarray, sample_rate: int, guitar_tone: str) -> li
 def _extract_note_candidates(window: np.ndarray, sample_rate: int, guitar_tone: str) -> list[dict[str, float | str]]:
     n_fft = _resolve_n_fft(len(window), guitar_tone)
     hop_length = max(64, n_fft // 4)
-    pitches, magnitudes = librosa.piptrack(y=window, sr=sample_rate, n_fft=n_fft, hop_length=hop_length)
+    analysis_window = _prepare_window_for_spectral_analysis(window, n_fft)
+    pitches, magnitudes = librosa.piptrack(y=analysis_window, sr=sample_rate, n_fft=n_fft, hop_length=hop_length)
 
     candidate_rows: list[tuple[float, float]] = []
 
@@ -253,6 +257,26 @@ def _resolve_n_fft(window_length: int, guitar_tone: str) -> int:
     n_fft = min(preferred, window_length)
     power_of_two = 2 ** int(np.floor(np.log2(n_fft)))
     return max(512, power_of_two)
+
+
+def _minimum_pitch_window_length(sample_rate: int) -> int:
+    fmin = librosa.note_to_hz("E2")
+    required_length = int(np.ceil((sample_rate / fmin) * 2.1))
+    return max(512, 2 ** int(np.ceil(np.log2(required_length))))
+
+
+def _prepare_window_for_pitch_analysis(window: np.ndarray, frame_length: int) -> np.ndarray:
+    if len(window) >= frame_length:
+        return window
+
+    return librosa.util.fix_length(window, size=frame_length)
+
+
+def _prepare_window_for_spectral_analysis(window: np.ndarray, n_fft: int) -> np.ndarray:
+    if len(window) >= n_fft:
+        return window
+
+    return librosa.util.fix_length(window, size=n_fft)
 
 
 def _is_probable_harmonic_duplicate(current_frequency: float, reference_frequency: float) -> bool:

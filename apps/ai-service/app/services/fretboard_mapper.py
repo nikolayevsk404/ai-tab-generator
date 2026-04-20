@@ -105,12 +105,10 @@ def map_events_to_fretboard(events: list[dict[str, Any]], profile: FretboardProf
         if not mapped_notes:
             continue
 
+        mapped_notes = _reduce_polyphonic_notes(mapped_notes, bool(event["is_chord"]))
         average_fret = sum(note["fret"] for note in mapped_notes) / len(mapped_notes)
         previous_average_fret = average_fret
-
-        primary_note = mapped_notes[0]
-        mapped_notes = [primary_note]
-        event_type = "single_note"
+        event_type = "chord" if event["is_chord"] and len(mapped_notes) > 1 else "single_note"
         technique = infer_technique(event_index, events, mapped_notes, tab_events)
 
         tab_event = {
@@ -124,9 +122,9 @@ def map_events_to_fretboard(events: list[dict[str, Any]], profile: FretboardProf
             "event_type": event_type,
             "technique": technique,
             "notes": mapped_notes,
-            "source_notes": [event["primary_note"]],
+            "source_notes": list(event["notes"]),
             "features": event["features"],
-            "octave_doubling": False,
+            "octave_doubling": bool(event["octave_doubling"]),
             "harmonic_candidate": event["harmonic_candidate"],
         }
         tab_events.append(tab_event)
@@ -224,8 +222,67 @@ def infer_technique(
     mapped_notes: list[dict[str, Any]],
     previous_tab_events: list[dict[str, Any]],
 ) -> str | None:
-    # Keep the first iteration intentionally simple: focus on pitch/time accuracy only.
+    if not events or event_index >= len(events):
+        return None
+
+    event = events[event_index]
+    expression = event.get("expression", {})
+
+    if expression.get("bend_candidate"):
+        return "bend"
+    if expression.get("release_bend_candidate"):
+        return "release_bend"
+    if expression.get("vibrato_candidate"):
+        return "vibrato"
+    if event.get("harmonic_candidate"):
+        return "harmonic"
+    if _is_repicked_same_note_event(event_index, events):
+        return "repalhetada"
+    if expression.get("sustain_candidate") and float(event.get("duration", 0.0)) >= 0.22:
+        return "sustain"
+
     return None
+
+
+def _is_repicked_same_note_event(event_index: int, events: list[dict[str, Any]]) -> bool:
+    event = events[event_index]
+    primary_note = event.get("primary_note")
+    if not primary_note:
+        return False
+
+    current_start = float(event.get("time", 0.0))
+    current_end = current_start + float(event.get("duration", 0.0))
+
+    for neighbor_index in (event_index - 1, event_index + 1):
+        if neighbor_index < 0 or neighbor_index >= len(events):
+            continue
+
+        neighbor = events[neighbor_index]
+        if neighbor.get("primary_note") != primary_note:
+            continue
+
+        neighbor_start = float(neighbor.get("time", 0.0))
+        neighbor_end = neighbor_start + float(neighbor.get("duration", 0.0))
+
+        if neighbor_index < event_index:
+            gap = current_start - neighbor_end
+        else:
+            gap = neighbor_start - current_end
+
+        if 0.0 <= gap <= 0.16:
+            return True
+
+    return False
+
+
+def _reduce_polyphonic_notes(mapped_notes: list[dict[str, Any]], is_chord: bool) -> list[dict[str, Any]]:
+    if not mapped_notes:
+        return []
+
+    if is_chord:
+        return sorted(mapped_notes, key=lambda note: (note["string"], note["fret"]))[:4]
+
+    return [min(mapped_notes, key=lambda note: (note["fret"], note["string"]))]
 
 
 def map_note_to_fretboard(note_name: str) -> dict[str, int]:

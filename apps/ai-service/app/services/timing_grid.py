@@ -67,10 +67,23 @@ def quantize_events_to_grid(events: list[dict[str, Any]], grid: dict[str, Any]) 
         return events
 
     quantized_events: list[dict[str, Any]] = []
+    previous_end_index = -1
 
     for event in events:
         start_index = _nearest_grid_index(event["time"], grid_times)
         end_index = _nearest_grid_index(event["time"] + event["duration"], grid_times)
+
+        detected_gap = float(event["time"]) - (
+            float(quantized_events[-1]["detected_time"]) + float(quantized_events[-1]["detected_duration"])
+        ) if quantized_events else None
+
+        if (
+            previous_end_index >= 0
+            and start_index > previous_end_index + 1
+            and detected_gap is not None
+            and detected_gap <= grid["step_duration"] * 1.25
+        ):
+            start_index = previous_end_index
 
         if end_index <= start_index:
             end_index = min(len(grid_times) - 1, start_index + 1)
@@ -89,6 +102,7 @@ def quantize_events_to_grid(events: list[dict[str, Any]], grid: dict[str, Any]) 
             "grid_end_index": end_index,
         }
         quantized_events.append(quantized_event)
+        previous_end_index = end_index
 
     return quantized_events
 

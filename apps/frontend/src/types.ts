@@ -35,6 +35,15 @@ export type AudioJobResponse = {
       detected_string_count?: number
       detected_tuning?: string
       tuning_notes?: Record<number, string>
+      timing_grid?: {
+        grid_times: number[]
+        subdivisions_per_beat: number
+        step_duration: number
+        total_duration: number
+        meter_numerator: number
+        meter_denominator: number
+        estimated_beat_duration: number
+      }
       distortion_features?: {
         spectral_flatness: number
         zero_crossing_rate: number
@@ -57,6 +66,7 @@ export type AudioJobResponse = {
       event_id: number
       time: number
       duration: number
+      grid_start_index?: number
       event_type: 'single_note' | 'chord'
       technique?: string | null
       notes: Array<{ note: string; mapped_note: string; string: number; fret: number; transposed: boolean }>

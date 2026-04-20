@@ -20,6 +20,18 @@ def test_quantize_events_to_grid_preserves_timeline_progression() -> None:
     assert quantized[0]["duration"] == 0.125
 
 
+def test_quantize_events_to_grid_reduces_artificial_gap_between_close_notes() -> None:
+    grid = build_time_grid([0.0, 0.5, 1.0], 1.2, 120.0, "distorted")
+    events = [
+        {"time": 0.12, "duration": 0.09, "notes": ["E4"]},
+        {"time": 0.23, "duration": 0.08, "notes": ["F4"]},
+    ]
+
+    quantized = quantize_events_to_grid(events, grid)
+
+    assert quantized[0]["grid_end_index"] == quantized[1]["grid_start_index"]
+
+
 def test_pick_consensus_bpm_prefers_clustered_tempo() -> None:
     bpm = _pick_consensus_bpm([(96.2, 1.0), (95.8, 0.9), (192.0, 0.4), (97.1, 0.7)])
     assert 95.0 <= bpm <= 98.0

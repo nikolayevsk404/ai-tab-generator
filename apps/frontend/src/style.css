@@ -101,7 +101,8 @@ a {
 .upload-card,
 .status-card,
 .result-card,
-.logs-card {
+.logs-card,
+.sheet-card {
   position: relative;
   display: grid;
   gap: 14px;
@@ -117,7 +118,8 @@ a {
 .upload-card::before,
 .status-card::before,
 .result-card::before,
-.logs-card::before {
+.logs-card::before,
+.sheet-card::before {
   content: "";
   position: absolute;
   inset: 0 0 auto;
@@ -133,6 +135,8 @@ a {
 .eyebrow,
 .upload-kicker,
 .status-label {
+  display: block;
+  margin: 0;
   text-transform: uppercase;
   letter-spacing: 0.2em;
   font-size: 0.72rem;
@@ -246,6 +250,18 @@ h2 {
   font-size: 1.6rem;
 }
 
+.card-head {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.card-stack {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
 .upload-card span:last-child,
 .status-card span,
 .empty-copy,
@@ -277,20 +293,43 @@ h2 {
   display: flex;
   justify-content: space-between;
   gap: 12px;
+  align-items: start;
+}
+
+.result-title-block {
+  display: grid;
+  gap: 8px;
+}
+
+.result-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  min-height: 1.05rem;
   align-items: center;
+  color: var(--text-muted);
+  font-size: 0.92rem;
+}
+
+.result-meta-placeholder {
+  visibility: hidden;
 }
 
 .result-card,
 .logs-card {
   grid-template-rows: auto minmax(0, 1fr);
-  max-height: min(72vh, 820px);
-  min-height: 475px;
+  max-height: min(62vh, 680px);
+  min-height: 390px;
+}
+
+.sheet-card {
+  min-height: 520px;
 }
 
 .result-actions {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: start;
   gap: 12px;
   color: var(--text-muted);
 }
@@ -316,10 +355,15 @@ h2 {
 
 .tab-viewer {
   display: grid;
-  gap: 8px;
+  gap: 10px;
   min-height: 0;
   overflow: auto;
   padding-right: 4px;
+}
+
+.tab-ledger {
+  display: grid;
+  gap: 8px;
 }
 
 .tab-header,
@@ -409,15 +453,48 @@ h2 {
 }
 
 .logs-card h2 {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  padding-bottom: 4px;
-  background: linear-gradient(180deg, rgba(17, 17, 17, 0.98), rgba(17, 17, 17, 0.88));
+  margin: 0;
+}
+
+.gp-sheet-viewer {
+  display: grid;
+  gap: 14px;
+  min-height: 100%;
+}
+
+.gp-sheet-header {
+  display: grid;
+  justify-content: flex-start;
+}
+
+.gp-sheet-header .status-label {
+  margin: 0;
+}
+
+.gp-sheet-surface {
+  min-height: 420px;
+  padding: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0.01)),
+    #fffdf8;
+  overflow: auto;
+}
+
+.gp-sheet-surface svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto 16px;
 }
 
 .error-copy {
+  margin: 0;
   color: var(--danger);
+}
+
+.empty-copy {
+  margin: 0;
 }
 
 @media (max-width: 980px) {
@@ -429,7 +506,8 @@ h2 {
   }
 
   .result-card,
-  .logs-card {
+  .logs-card,
+  .sheet-card {
     max-height: none;
     min-height: 0;
   }
@@ -447,13 +525,18 @@ h2 {
   .upload-card,
   .status-card,
   .result-card,
-  .logs-card {
+  .logs-card,
+  .sheet-card {
     padding: 18px;
   }
 
   .hero-topline,
   .result-heading {
     grid-template-columns: 1fr;
+    display: grid;
+  }
+
+  .gp-sheet-header {
     display: grid;
   }
 

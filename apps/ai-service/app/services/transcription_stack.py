@@ -8,6 +8,7 @@ import numpy as np
 from app.services.audio_analysis import analyze_audio_context, isolate_guitar_signal, signal_to_audio_bytes
 from app.services.audio_embeddings import compute_audio_embedding
 from app.services.musical_event_detection import detect_musical_events
+from app.services.note_mapper import note_name_to_midi
 
 try:
     import librosa
@@ -36,7 +37,15 @@ def run_solo_transcription(
             guitar_tone=audio_context["guitar_tone"],
             onset_times=audio_context.get("onset_times"),
         )
-        events = _filter_guitar_events(events, guitar_signal, sample_rate, audio_context["guitar_tone"])
+        events = _refine_events_with_onsets(events, audio_context.get("onset_times"), audio_context["guitar_tone"])
+        events = _stabilize_pitch_contour(events)
+        events = _filter_guitar_events(
+            events,
+            guitar_signal,
+            sample_rate,
+            audio_context["guitar_tone"],
+            onset_times=audio_context.get("onset_times"),
+        )
         transcription = {
             "backend": "librosa-fallback",
             "source": "heuristic",
@@ -46,7 +55,15 @@ def run_solo_transcription(
     else:
         raw_event_count = len(backend_result["note_events"])
         events = _convert_basic_pitch_events(backend_result["note_events"])
-        events = _filter_guitar_events(events, guitar_signal, sample_rate, audio_context["guitar_tone"])
+        events = _refine_events_with_onsets(events, audio_context.get("onset_times"), audio_context["guitar_tone"])
+        events = _stabilize_pitch_contour(events)
+        events = _filter_guitar_events(
+            events,
+            guitar_signal,
+            sample_rate,
+            audio_context["guitar_tone"],
+            onset_times=audio_context.get("onset_times"),
+        )
         transcription = {
             "backend": "basic-pitch",
             "source": "pretrained",
@@ -203,11 +220,12 @@ def _filter_guitar_events(
     signal: np.ndarray,
     sample_rate: int,
     guitar_tone: str,
+    onset_times: list[float] | None = None,
 ) -> list[dict[str, Any]]:
     filtered_events: list[dict[str, Any]] = []
 
     for event in events:
-        score = _score_event_as_guitar(event, signal, sample_rate, guitar_tone)
+        score = _score_event_as_guitar(event, signal, sample_rate, guitar_tone, onset_times=onset_times)
         if score < (0.52 if guitar_tone == "clean" else 0.48):
             continue
 
@@ -222,7 +240,6 @@ def _enforce_monophonic_timeline(events: list[dict[str, Any]]) -> list[dict[str,
         return []
 
     kept: list[dict[str, Any]] = []
-    active_end = -1.0
 
     for event in sorted(
         events,
@@ -237,25 +254,146 @@ def _enforce_monophonic_timeline(events: list[dict[str, Any]]) -> list[dict[str,
 
         if not kept:
             kept.append(event)
-            active_end = end
-            continue
-
-        if start >= active_end - 0.015:
-            kept.append(event)
-            active_end = end
             continue
 
         previous = kept[-1]
+        previous_start = float(previous["time"])
+        previous_end = previous_start + float(previous["duration"])
         previous_confidence = float(previous["features"].get("transcription_confidence", 0.0))
-        previous_end = float(previous["time"]) + float(previous["duration"])
 
-        if confidence > previous_confidence:
-            kept[-1] = event
-            active_end = end
-        else:
-            active_end = max(active_end, previous_end)
+        if start >= previous_end - 0.015:
+            kept.append(event)
+            continue
+
+        same_note = previous["primary_note"] == event["primary_note"]
+        if same_note and _should_merge_same_note_events(previous, event):
+            previous["duration"] = round(max(previous_end, end) - previous_start, 3)
+            previous["features"]["transcription_confidence"] = round(max(previous_confidence, confidence), 5)
+            previous["expression"]["sustain_candidate"] = previous["duration"] >= 0.2
+            continue
+
+        if confidence > previous_confidence + 0.08:
+            trimmed_previous_duration = round(max(0.04, start - previous_start), 3)
+            if trimmed_previous_duration > 0.04:
+                previous["duration"] = trimmed_previous_duration
+            else:
+                kept.pop()
+            kept.append(event)
+            continue
+
+        shifted_start = max(previous_end, start)
+        shifted_duration = round(end - shifted_start, 3)
+        if shifted_duration >= 0.04:
+            adjusted_event = {
+                **event,
+                "time": round(shifted_start, 3),
+                "duration": shifted_duration,
+            }
+            kept.append(adjusted_event)
 
     return kept
+
+
+def _refine_events_with_onsets(
+    events: list[dict[str, Any]],
+    onset_times: list[float] | None,
+    guitar_tone: str,
+) -> list[dict[str, Any]]:
+    if not events:
+        return []
+
+    normalized_onsets = sorted(float(time) for time in (onset_times or []) if time >= 0)
+    if not normalized_onsets:
+        return events
+
+    alignment_window = 0.065 if guitar_tone in {"distorted", "mixed"} else 0.085
+    split_guard = 0.075 if guitar_tone in {"distorted", "mixed"} else 0.11
+    refined: list[dict[str, Any]] = []
+
+    for event in sorted(events, key=lambda item: float(item["time"])):
+        start = float(event["time"])
+        end = start + float(event["duration"])
+        snapped_start = _nearest_onset(start, normalized_onsets, alignment_window)
+        onset_anchor = snapped_start if snapped_start is not None else start
+        interior_onset = _first_onset_between(
+            normalized_onsets,
+            onset_anchor + split_guard,
+            max(onset_anchor + split_guard, end - 0.045),
+        )
+
+        if snapped_start is not None and snapped_start < end - 0.03:
+            start = snapped_start
+
+        if interior_onset is not None and interior_onset < end - 0.03:
+            end = interior_onset
+
+        duration = round(end - start, 3)
+        if duration < 0.04:
+            continue
+
+        refined.append(
+            {
+                **event,
+                "time": round(start, 3),
+                "duration": duration,
+            }
+        )
+
+    return _enforce_monophonic_timeline(refined)
+
+
+def _stabilize_pitch_contour(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if len(events) < 3:
+        return events
+
+    stabilized = [dict(event) for event in events]
+
+    for index in range(1, len(stabilized) - 1):
+        current = stabilized[index]
+        previous = stabilized[index - 1]
+        following = stabilized[index + 1]
+
+        if current.get("is_chord") or len(current.get("notes", [])) != 1:
+            continue
+
+        previous_midi = note_name_to_midi(previous["primary_note"])
+        current_midi = note_name_to_midi(current["primary_note"])
+        next_midi = note_name_to_midi(following["primary_note"])
+        target_center = (previous_midi + next_midi) / 2
+
+        original_distance = abs(current_midi - target_center)
+        best_midi = current_midi
+        best_distance = original_distance
+
+        for semitone_shift in (-24, -12, 12, 24):
+            candidate_midi = current_midi + semitone_shift
+            if candidate_midi < 40 or candidate_midi > 88:
+                continue
+
+            candidate_distance = abs(candidate_midi - target_center)
+            if candidate_distance + 4 < best_distance:
+                best_midi = candidate_midi
+                best_distance = candidate_distance
+
+        if best_midi == current_midi:
+            continue
+
+        confidence = float(current["features"].get("transcription_confidence", 0.0))
+        neighbor_span = abs(previous_midi - next_midi)
+        if original_distance < 10 or confidence >= 0.82 or neighbor_span > 9:
+            continue
+
+        corrected_note = _midi_to_note_name(best_midi)
+        corrected_frequency = round(float(_midi_to_frequency(best_midi)), 2)
+        current["primary_note"] = corrected_note
+        current["notes"] = [corrected_note]
+        current["frequencies"] = [corrected_frequency]
+        current["features"] = {
+            **current["features"],
+            "octave_stabilized": True,
+        }
+
+    return stabilized
 
 
 def _should_merge_same_note_events(previous: dict[str, Any], current: dict[str, Any]) -> bool:
@@ -277,6 +415,7 @@ def _score_event_as_guitar(
     signal: np.ndarray,
     sample_rate: int,
     guitar_tone: str,
+    onset_times: list[float] | None = None,
 ) -> float:
     start_sample = max(0, int(float(event["time"]) * sample_rate))
     end_sample = min(len(signal), int((float(event["time"]) + float(event["duration"])) * sample_rate))
@@ -298,6 +437,7 @@ def _score_event_as_guitar(
     harmonic, percussive = librosa.effects.hpss(window)
     harmonic_ratio = float(np.mean(np.abs(harmonic))) / (float(np.mean(np.abs(percussive))) + 1e-6)
     confidence = float(event["features"].get("transcription_confidence", event["features"]["candidate_strengths"][0]))
+    onset_distance = _distance_to_nearest_onset(float(event["time"]), onset_times)
 
     score = 0.0
     if rms >= 0.008:
@@ -314,5 +454,28 @@ def _score_event_as_guitar(
         score += 0.05
     if confidence >= 0.6:
         score += 0.1
+    if onset_distance is not None and onset_distance <= (0.045 if guitar_tone in {"distorted", "mixed"} else 0.065):
+        score += 0.1
 
     return min(1.0, score)
+
+
+def _nearest_onset(time_seconds: float, onset_times: list[float], max_distance: float) -> float | None:
+    nearest = min(onset_times, key=lambda onset: abs(onset - time_seconds), default=None)
+    if nearest is None or abs(nearest - time_seconds) > max_distance:
+        return None
+    return round(float(nearest), 3)
+
+
+def _first_onset_between(onset_times: list[float], start_time: float, end_time: float) -> float | None:
+    for onset in onset_times:
+        if start_time <= onset <= end_time:
+            return round(float(onset), 3)
+    return None
+
+
+def _distance_to_nearest_onset(time_seconds: float, onset_times: list[float] | None) -> float | None:
+    if not onset_times:
+        return None
+
+    return min(abs(float(onset) - time_seconds) for onset in onset_times)
