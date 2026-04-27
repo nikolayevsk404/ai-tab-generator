@@ -113,9 +113,15 @@ onBeforeUnmount(() => {
             <h2>Painel do Job</h2>
           </div>
           <div class="card-stack">
-            <strong>{{ activeJob?.status ?? 'idle' }}</strong>
+            <strong class="status-pill">
+              <span>{{ activeJob?.status ?? 'idle' }}</span>
+              <span v-if="isProcessing" class="status-dots" aria-hidden="true">
+                <span>.</span>
+                <span>.</span>
+                <span>.</span>
+              </span>
+            </strong>
             <span v-if="selectedFileName">{{ selectedFileName }}</span>
-            <span v-if="activeJob?.job_id">Job #{{ activeJob.job_id }}</span>
             <span v-if="activeJob?.logs?.audio_context">
               Timbre: {{ activeJob.logs.audio_context.guitar_tone }} | BPM: {{ Math.round(activeJob.logs.audio_context.tempo_bpm) }}
             </span>
